@@ -1,7 +1,12 @@
 package uploadfile;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.List;
+import java.util.UUID;
 
 import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
@@ -10,7 +15,8 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
 import org.apache.commons.fileupload.FileItem;
-import org.apache.commons.fileupload.FileUploadException;
+import org.apache.commons.fileupload.FileUploadBase;
+import org.apache.commons.fileupload.ProgressListener;
 import org.apache.commons.fileupload.disk.DiskFileItemFactory;
 import org.apache.commons.fileupload.servlet.ServletFileUpload;
 
@@ -26,41 +32,112 @@ public class UploadFileServlet extends HttpServlet {
 
 	@Override
 	protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
-		//fileupload.jar
-		//1.创建一个工厂类
+		//1.获取和创建保存文件的最终目录和临时目录
+		String savePath = req.getSession().getServletContext().getRealPath("/WEB-INF/upload"); //保存文件的服务器上的绝对路径
+		String tempPath = req.getSession().getServletContext().getRealPath("/WEB-INF/temp"); //临时目录
+		File tempFile = new File(tempPath);
+		if (!tempFile.exists()) {
+			tempFile.mkdirs();   //如果临时目录不存在的话，我用代码的方式，创建一个新目录
+		}
+		
+		//2.创建一个DiskFileItemFactory工厂
 		DiskFileItemFactory factory = new DiskFileItemFactory();
-		//factory工厂类，可以设置很多对上传文件的限制内容
-		//public DiskFileItemFactory(int sizeThreshold,File repository)
-		//sizeThreshold:服务器里内存，有限资源，上传文件，传过来的文件放到内存里，快
-		//              50G的大文件，内存放不下，内存溢出错误，操作死机
-		//              限制：sizeThreshold临界值，600KB  上传的文件，小于600KB，把接收到的整个文件
-		//              放在内存，程序可以直接从内存当中拿到整个文件
-		//              传来的文件大于600KB，把传过来的文件分成很多部分，放在磁盘上的某个临时文件夹
-		//              程序需要整个文件，就去内存和临时文件夹里的临时文件中去取
-		//repository:设置临时文件夹的
+		factory.setSizeThreshold(100*1024); //单位：字节 , 100KB,上传的文件<100KB,放在内存中，>100KB,放tempPath
+		factory.setRepository(tempFile); //设置上传文件的临时目录
 		
-		//2.创建request请求的解析器
-		ServletFileUpload sfu = new ServletFileUpload(factory);
-		//sfu这个解析器，也是可以设置对上传文件的限制内容：可以是单个文件的最大容量，也可是多个文件的总大小
-//		sfu.setFileSizeMax(fileSizeMax);
-//		sfu.setSizeMax(sizeMax);
+		//3.创建一个文件上传解析器
+		ServletFileUpload servletFileUpload = new ServletFileUpload(factory); //得到文件的解析器
+		servletFileUpload.setFileSizeMax(20*1024*1024); //限制上传单个文件的大小在20M以内
+		servletFileUpload.setHeaderEncoding("UTF-8"); //防止上传的中文信息是乱码
+		servletFileUpload.setFileSizeMax(40*1024*1024); //限制多个文件同时上传的时候，总大小最大值40M
+		servletFileUpload.setProgressListener(new ProgressListener() {
+			@Override
+			public void update(long yUploadFileSize, long uploadFileSize, int item) {
+				System.out.println("上传文件总大小为：" + uploadFileSize + ",已经上传文件的大小：" + yUploadFileSize);
+			}
+		});
 		
-		//3.解析器来解析request请求,解析需要捕获异常
+		//4.判断提交上来的数据是否是上传表单的数据，是不是Multipart编码方式   ServletFileUpload.isMultipartContent(request)
+		if (!ServletFileUpload.isMultipartContent(req)) {
+			return;
+		}
+		
+		//5.使用ServletFileUpload解析器解析上传数据，解析结果返回的是一个List<FileItem>集合
+		OutputStream out = null;
+		InputStream in = null;
 		try {
-			List<FileItem> list = sfu.parseRequest(req);
-			for(FileItem fileItem:list) {
-				//fileItem:就是封装有一个一个form提交过来的表单项：普通表单项 / 文件域表单项
-				//第一步，判断这个表单项是不是普通表单项
-				if(fileItem.isFormField()) {
-					//像普通表单一样处理
-					String name = fileItem.getFieldName(); //拿到这个域的名字
-					String value = fileItem.getString(); //拿到这个域里的值
-				}else {
-					//上传上来的文件
+			List<FileItem> fileList = servletFileUpload.parseRequest(req);
+			if (fileList != null && fileList.size() > 0) {
+				for(FileItem fileItem:fileList) {
+					if (fileItem.isFormField()) {
+						//将普通表单域的键值对显示出来
+						System.out.println("普通的表单项，name为：" + fileItem.getFieldName());
+						System.out.println("普通的表单项，value为：" + fileItem.getString());
+					}else {
+						//是文件域，通过fileItem,拿到上传上来的文件的各种信息，和文件的文本
+						String fileName = fileItem.getName(); //拿到文件的名字 xxx.doc  xxx.txt
+						if (fileName == null || fileName.trim().equals("")) {
+							continue;
+						}
+						//注意事项：IE拿到的fileName是带有绝对路径，D:\abc\xxx.doc  ;   火狐浏览器拿到的  xxx.doc
+						fileName = fileName.substring(fileName.lastIndexOf("\\")+1);
+						String fileType = fileItem.getContentType(); //拿到文件的类型image/jpg
+						long fileSize = fileItem.getSize(); //拿到文件的总大小
+						//拿到文件后缀名
+						String fileEx = fileName.substring(fileName.lastIndexOf(".")+1);
+						//验证后缀的合法性
+						if (fileEx.equals("rar") || fileEx.equals("zip")) {
+							throw new RuntimeException("禁止上传压缩文件！");
+						}
+						//将文件流写入保存的目录中(生成新的文件名，避免一个目录中文件太多而生成新的存储目录)
+						String saveFileName = makeFileName(fileName);
+						String realSavePath = makePath(saveFileName,savePath);
+						//先创建一个输出流
+						out = new FileOutputStream(realSavePath + "\\" + saveFileName);
+						in = fileItem.getInputStream();
+						//建立缓存区，做一个搬运文件数据流的勺子
+						byte[] buffer = new byte[1024];
+						int len = 0;
+						while ((len=in.read(buffer)) > 0){
+							out.write(buffer, 0, len);
+						}
+						in.close();
+						out.close();
+					}
 				}
 			}
-		} catch (FileUploadException e) {
-			e.printStackTrace();
+		} catch (FileUploadBase.FileSizeLimitExceededException e) {
+			System.out.println("单个文件大小超出限制！");
+		}catch (FileUploadBase.SizeLimitExceededException e) {
+			System.out.println("总文件大小超出限制！");
+		}catch (Exception e) {
+			System.out.println("上传文件失败！");
+		}finally {
+			if (in != null) {
+				in.close();
+			}
+			if (out != null) {
+				out.close();
+			}
 		}
+	}
+
+	private String makePath(String saveFileName, String savePath) {
+		//拿到文件名字，在内存当中地址，hashCode值
+		int hashCode = saveFileName.hashCode();
+		int dir1 = hashCode&0xf; //dir1的值，这个与运算结果范围0-15
+		int dir2 = hashCode&0xf >> 4; //得到的结果还是0-15范围内
+		//用dir1,dir2构造我的新的存储文件的目录
+		String dir = savePath + "\\" + dir1 + "\\" + dir2;
+		File file = new File(dir);
+		if (!file.exists()) {
+			file.mkdirs();
+		}
+		return dir;
+	}
+
+	private String makeFileName(String fileName) {
+		//uuid
+		return UUID.randomUUID().toString()+"_"+fileName;
 	}
 }
