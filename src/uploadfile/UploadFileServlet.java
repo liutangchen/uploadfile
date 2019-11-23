@@ -72,7 +72,7 @@ public class UploadFileServlet extends HttpServlet {
 					if (fileItem.isFormField()) {
 						//将普通表单域的键值对显示出来
 						System.out.println("普通的表单项，name为：" + fileItem.getFieldName());
-						System.out.println("普通的表单项，value为：" + fileItem.getString());
+						System.out.println("普通的表单项，value为：" + fileItem.getString("UTF-8"));
 					}else {
 						//是文件域，通过fileItem,拿到上传上来的文件的各种信息，和文件的文本
 						String fileName = fileItem.getName(); //拿到文件的名字 xxx.doc  xxx.txt
@@ -126,7 +126,7 @@ public class UploadFileServlet extends HttpServlet {
 		//拿到文件名字，在内存当中地址，hashCode值
 		int hashCode = saveFileName.hashCode();
 		int dir1 = hashCode&0xf; //dir1的值，这个与运算结果范围0-15
-		int dir2 = hashCode&0xf >> 4; //得到的结果还是0-15范围内
+		int dir2 = (hashCode >> 4)&0xf; //得到的结果还是0-15范围内
 		//用dir1,dir2构造我的新的存储文件的目录
 		String dir = savePath + "\\" + dir1 + "\\" + dir2;
 		File file = new File(dir);
